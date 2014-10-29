@@ -185,9 +185,9 @@ func (c *connector) readloop(in chan pkt) {
 		msg, addr, err := c.readMessage()
 		if err != nil {
 			// log dud packets
-			log.Printf("Cound not read from %s: %s", c.UDPConn, err)
+			log.Printf("Could not read from %s: %s", c.UDPConn, err)
 		}
-		if len(msg.Question) > 0 {
+		if nil != msg && len(msg.Question) > 0 {
 			c.questions++
 			in <- pkt{msg, addr}
 		}
