@@ -1,3 +1,8 @@
+This is a minor fork of Dave Cheney's [excellent mdns library](https://github.com/davecheney/mdns)
+
+It removes the gmx stuff and doesn't log on publish unless there are NO interfaces available,
+instead of if either ipv4 or ipv6 is unavailable.
+
 Introduction
 ============
 
@@ -63,6 +68,6 @@ Changelog
 
 * Updated LICENCE to a proper BSD 2 clause
 * Added gmx instrumentation
-* Updated to the Go 1 multicast API 
+* Updated to the Go 1 multicast API
 
 14/10/2011 Initial Release

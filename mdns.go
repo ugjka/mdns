@@ -6,7 +6,6 @@ import (
 	"log"
 	"net"
 
-	"github.com/davecheney/gmx"
 	"github.com/miekg/dns"
 )
 
@@ -33,18 +32,9 @@ func init() {
 	if err := local.listen(ipv4mcastaddr); err != nil {
 		log.Fatalf("Failed to listen %s: %s", ipv4mcastaddr, err)
 	}
-	if err := local.listen(ipv6mcastaddr); err != nil {
-		log.Printf("Failed to listen %s: %s", ipv6mcastaddr, err)
-	}
 
-	// publish gmx stats for the local zone
-	gmx.Publish("mdns.zone.local.queries", func() interface{} {
-		return local.queryCount
-	})
-	gmx.Publish("mdns.zone.local.entries", func() interface{} {
-		return local.entryCount
-	})
-
+	// if we cannot listen, ignore, we really don't care about ipv6 right now
+	local.listen(ipv6mcastaddr)
 }
 
 // Publish adds a record, described in RFC XXX
@@ -85,21 +75,16 @@ type zone struct {
 	entries map[string]entries
 	add     chan *entry // add entries to zone
 	queries chan *query // query exsting entries in zone
-
-	// gmx statistics
-	queryCount, entryCount int
 }
 
 func (z *zone) mainloop() {
 	for {
 		select {
 		case entry := <-z.add:
-			z.entryCount++
 			if !z.entries[entry.fqdn()].contains(entry) {
 				z.entries[entry.fqdn()] = append(z.entries[entry.fqdn()], entry)
 			}
 		case q := <-z.queries:
-			z.queryCount++
 			for _, entry := range z.entries[q.Question.Name] {
 				if q.matches(entry) {
 					q.result <- entry
@@ -137,9 +122,6 @@ type connector struct {
 	*net.UDPAddr
 	*net.UDPConn
 	*zone
-
-	// gmx statistics
-	questions, responses int
 }
 
 func (z *zone) listen(addr *net.UDPAddr) error {
@@ -154,14 +136,6 @@ func (z *zone) listen(addr *net.UDPAddr) error {
 	}
 	go c.mainloop()
 
-	// publish gmx stats for the connector
-	gmx.Publish("mdns.connector.questions", func() interface{} {
-		return c.questions
-	})
-	gmx.Publish("mdns.connector.responses", func() interface{} {
-		return c.responses
-	})
-
 	return nil
 }
 
@@ -172,7 +146,6 @@ func openSocket(addr *net.UDPAddr) (*net.UDPConn, error) {
 	default:
 		return net.ListenMulticastUDP("udp4", nil, ipv4mcastaddr)
 	}
-	panic("unreachable")
 }
 
 type pkt struct {
@@ -185,11 +158,10 @@ func (c *connector) readloop(in chan pkt) {
 		msg, addr, err := c.readMessage()
 		if err != nil {
 			// log dud packets
-			log.Printf("Could not read from %s: %s", c.UDPConn, err)
+			log.Printf("Could not read from %v: %s", c.UDPConn, err)
 			continue
 		}
 		if len(msg.Question) > 0 {
-			c.questions++
 			in <- pkt{msg, addr}
 		}
 	}
@@ -206,7 +178,6 @@ func (c *connector) mainloop() {
 		}
 		msg.Extra = append(msg.Extra, c.findExtra(msg.Answer...)...)
 		if len(msg.Answer) > 0 {
-			c.responses++
 			// nuke questions
 			msg.Question = nil
 			if err := c.writeMessage(msg.Msg, msg.UDPAddr); err != nil {
