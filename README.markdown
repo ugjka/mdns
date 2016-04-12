@@ -1,7 +1,17 @@
-This is a minor fork of Dave Cheney's [excellent mdns library](https://github.com/davecheney/mdns)
+This is a minor fork of Brian McCallisters [minor fork](https://github.com/brianm/mdns) of Dave Cheney's [excellent mdns library](https://github.com/davecheney/mdns)
 
 It removes the gmx stuff and doesn't log on publish unless there are NO interfaces available,
 instead of if either ipv4 or ipv6 is unavailable.
+
+Further more it exports the Zone type and adds a New function for creating a zone. This enables discarding previously published entries.
+
+    import "github.com/eliasgs/mdns"
+
+    zone, err := mdns.New()
+    if err != nil {
+      panic(err)
+    }
+    zone.Publish("yourhost.local 60 IN A 192.168.1.100")
 
 Introduction
 ============

@@ -3,6 +3,7 @@ package mdns
 // Advertise network services via multicast DNS
 
 import (
+	"fmt"
 	"log"
 	"net"
 
@@ -19,32 +20,37 @@ var (
 		IP:   net.ParseIP("ff02::fb"),
 		Port: 5353,
 	}
-	local *zone // the local mdns zone
+	local *Zone // the local mdns zone
 )
 
 func init() {
-	local = &zone{
+	var err error
+	local, err = New()
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+// New initialized zone.
+func New() (*Zone, error) {
+	z := &Zone{
 		entries: make(map[string]entries),
 		add:     make(chan *entry),
 		queries: make(chan *query, 16),
 	}
-	go local.mainloop()
-	if err := local.listen(ipv4mcastaddr); err != nil {
-		log.Fatalf("Failed to listen %s: %s", ipv4mcastaddr, err)
+	go z.mainloop()
+	if err := z.listen(ipv4mcastaddr); err != nil {
+		return nil, fmt.Errorf("Failed to listen %s: %s", ipv4mcastaddr, err)
 	}
 
 	// if we cannot listen, ignore, we really don't care about ipv6 right now
-	local.listen(ipv6mcastaddr)
+	z.listen(ipv6mcastaddr)
+	return z, nil
 }
 
-// Publish adds a record, described in RFC XXX
+// Publish adds a record, to the default zone.
 func Publish(r string) error {
-	rr, err := dns.NewRR(r)
-	if err != nil {
-		return err
-	}
-	local.add <- &entry{rr}
-	return nil
+	return local.Publish(r)
 }
 
 type entry struct {
@@ -71,13 +77,24 @@ func (e entries) contains(entry *entry) bool {
 	return false
 }
 
-type zone struct {
+// Zone holds all published entries.
+type Zone struct {
 	entries map[string]entries
 	add     chan *entry // add entries to zone
 	queries chan *query // query exsting entries in zone
 }
 
-func (z *zone) mainloop() {
+// Publish adds a record, described in RFC XXX
+func (z *Zone) Publish(r string) error {
+	rr, err := dns.NewRR(r)
+	if err != nil {
+		return err
+	}
+	z.add <- &entry{rr}
+	return nil
+}
+
+func (z *Zone) mainloop() {
 	for {
 		select {
 		case entry := <-z.add:
@@ -95,7 +112,7 @@ func (z *zone) mainloop() {
 	}
 }
 
-func (z *zone) query(q dns.Question) (entries []*entry) {
+func (z *Zone) query(q dns.Question) (entries []*entry) {
 	res := make(chan *entry, 16)
 	z.queries <- &query{q, res}
 	for e := range res {
@@ -121,10 +138,10 @@ func equals(this, that *entry) bool {
 type connector struct {
 	*net.UDPAddr
 	*net.UDPConn
-	*zone
+	*Zone
 }
 
-func (z *zone) listen(addr *net.UDPAddr) error {
+func (z *Zone) listen(addr *net.UDPAddr) error {
 	conn, err := openSocket(addr)
 	if err != nil {
 		return err
@@ -132,7 +149,7 @@ func (z *zone) listen(addr *net.UDPAddr) error {
 	c := &connector{
 		UDPAddr: addr,
 		UDPConn: conn,
-		zone:    z,
+		Zone:    z,
 	}
 	go c.mainloop()
 
@@ -189,7 +206,7 @@ func (c *connector) mainloop() {
 
 func (c *connector) query(qs []dns.Question) (results []*entry) {
 	for _, q := range qs {
-		results = append(results, c.zone.query(q)...)
+		results = append(results, c.Zone.query(q)...)
 	}
 	return
 }
@@ -214,7 +231,7 @@ func (c *connector) findExtra(r ...dns.RR) (extra []dns.RR) {
 		default:
 			continue
 		}
-		res := c.zone.query(q)
+		res := c.Zone.query(q)
 		if len(res) > 0 {
 			for _, entry := range res {
 				extra = append(append(extra, entry.RR), c.findExtra(entry.RR)...)
