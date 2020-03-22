@@ -157,13 +157,7 @@ func (q *query) matches(entry *entry) bool {
 }
 
 func equals(this, that *entry) bool {
-	if _, ok := this.RR.(*dns.ANY); ok {
-		return true // *ANY matches anything
-	}
-	if _, ok := that.RR.(*dns.ANY); ok {
-		return true // *ANY matches all
-	}
-	return false
+	return dns.IsDuplicate(this.RR, that.RR)
 }
 
 type connector struct {
