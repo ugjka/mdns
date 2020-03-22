@@ -115,7 +115,7 @@ func (z *Zone) mainloop() {
 			}
 		case entry := <-z.remove:
 			println("checking if we can remove")
-			if z.entries[entry.fqdn()].contains(entry) {
+			if _, ok := z.entries[entry.fqdn()]; ok {
 				println("removing from", entry.fqdn())
 				tmp := z.entries[entry.fqdn()][:0]
 				for _, e := range z.entries[entry.fqdn()] {
