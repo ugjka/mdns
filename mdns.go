@@ -114,14 +114,23 @@ func (z *Zone) mainloop() {
 				z.entries[entry.fqdn()] = append(z.entries[entry.fqdn()], entry)
 			}
 		case entry := <-z.remove:
+			println("checking if we can remove")
 			if z.entries[entry.fqdn()].contains(entry) {
+				println("removing from", entry.fqdn())
 				tmp := z.entries[entry.fqdn()][:0]
 				for _, e := range z.entries[entry.fqdn()] {
 					if !equals(entry, e) {
 						tmp = append(tmp, e)
+					} else {
+						println("removing", e.fqdn())
 					}
 				}
+
 				z.entries[entry.fqdn()] = tmp
+				if len(z.entries[entry.fqdn()]) == 0 {
+					println("emptying", entry.fqdn())
+					delete(z.entries, entry.fqdn())
+				}
 			}
 		case q := <-z.queries:
 			for _, entry := range z.entries[q.Question.Name] {
