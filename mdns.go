@@ -112,7 +112,7 @@ func (z *Zone) mainloop() {
 		case entry := <-z.add:
 			println("checking if we can add")
 			if !z.entries[entry.fqdn()].contains(entry) {
-				println("adding", e.fqdn())
+				println("adding", entry.fqdn())
 				z.entries[entry.fqdn()] = append(z.entries[entry.fqdn()], entry)
 			}
 		case entry := <-z.remove:
