@@ -110,27 +110,20 @@ func (z *Zone) mainloop() {
 	for {
 		select {
 		case entry := <-z.add:
-			println("checking if we can add")
 			if !z.entries[entry.fqdn()].contains(entry) {
-				println("adding", entry.fqdn())
 				z.entries[entry.fqdn()] = append(z.entries[entry.fqdn()], entry)
 			}
 		case entry := <-z.remove:
-			println("checking if we can remove")
 			if _, ok := z.entries[entry.fqdn()]; ok {
-				println("removing from", entry.fqdn())
 				tmp := z.entries[entry.fqdn()][:0]
 				for _, e := range z.entries[entry.fqdn()] {
 					if !equals(entry, e) {
 						tmp = append(tmp, e)
-					} else {
-						println("removing", e.fqdn())
 					}
 				}
 
 				z.entries[entry.fqdn()] = tmp
 				if len(z.entries[entry.fqdn()]) == 0 {
-					println("emptying", entry.fqdn())
 					delete(z.entries, entry.fqdn())
 				}
 			}
