@@ -96,7 +96,7 @@ func (z *Zone) Publish(r string) error {
 	return nil
 }
 
-// Publish adds a record, described in RFC XXX
+// Unpublish removes a record, described in RFC XXX
 func (z *Zone) Unpublish(r string) error {
 	rr, err := dns.NewRR(r)
 	if err != nil {
