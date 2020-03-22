@@ -116,9 +116,9 @@ func (z *Zone) mainloop() {
 		case entry := <-z.remove:
 			if z.entries[entry.fqdn()].contains(entry) {
 				tmp := z.entries[entry.fqdn()][:0]
-				for _, ee := range z.entries[entry.fqdn()] {
-					if !equals(entry, ee) {
-						tmp = append(tmp, p)
+				for _, e := range z.entries[entry.fqdn()] {
+					if !equals(entry, e) {
+						tmp = append(tmp, e)
 					}
 				}
 				z.entries[entry.fqdn()] = tmp
