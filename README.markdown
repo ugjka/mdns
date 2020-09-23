@@ -23,7 +23,11 @@ Usage
 Publishing mDNS records is simple
 
     import "github.com/davecheney/mdns"
-
+    
+    err := mdns.ListenInit()
+    if err != nil {
+        log.Fatalln(err)
+    }
     mdns.Publish("yourhost.local 60 IN A 192.168.1.100")
 
 This places an A record into the internal zone file. Broadcast mDNS queries that match records in the internal zone file are responded to automatically. Other records types are supported, check the godoc for more information.
