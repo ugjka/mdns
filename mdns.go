@@ -39,12 +39,16 @@ var IsIpv4Init bool
 var IsIpv6Init bool
 
 func ListenInit() error {
+	if IsIpv4Init && IsIpv6Init {
+		return nil
+	}
+
 	if !IsIpv4Init {
 		if err := local.listen(ipv4mcastaddr); err != nil {
 			return errors.New(fmt.Sprintf("Failed to listen %s: %s", ipv4mcastaddr, err))
 		}
+		IsIpv4Init = true
 	}
-	IsIpv4Init = true
 
 	if !IsIpv6Init {
 		if err := local.listen(ipv6mcastaddr); err != nil {
