@@ -34,12 +34,23 @@ func init() {
 	go local.mainloop()
 
 }
+
+var isIpv4Init bool
+var isIpv6Init bool
+
 func ListenInit() error {
-	if err := local.listen(ipv4mcastaddr); err != nil {
-		return errors.New(fmt.Sprintf("Failed to listen %s: %s", ipv4mcastaddr, err))
+	if !isIpv4Init {
+		if err := local.listen(ipv4mcastaddr); err != nil {
+			return errors.New(fmt.Sprintf("Failed to listen %s: %s", ipv4mcastaddr, err))
+		}
 	}
-	if err := local.listen(ipv6mcastaddr); err != nil {
-		return errors.New(fmt.Sprintf("Failed to listen %s: %s", ipv6mcastaddr, err))
+	isIpv4Init = true
+
+	if !isIpv6Init {
+		if err := local.listen(ipv6mcastaddr); err != nil {
+			return errors.New(fmt.Sprintf("Failed to listen %s: %s", ipv6mcastaddr, err))
+		}
+		isIpv6Init = true
 	}
 
 	// publish gmx stats for the local zone
