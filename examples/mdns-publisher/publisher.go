@@ -7,7 +7,7 @@ import (
 
 func mustPublish(rr string) {
 	if err := mdns.Publish(rr); err != nil {
-		log.Fatalf(`Unable to publish record "%s": %v`, rr, err)
+		log.Println(`Unable to publish record "%s": %v`, rr, err)
 	}
 }
 

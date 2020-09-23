@@ -3,6 +3,8 @@ package mdns
 // Advertise network services via multicast DNS
 
 import (
+	"errors"
+	"fmt"
 	"log"
 	"net"
 
@@ -30,11 +32,14 @@ func init() {
 		queries: make(chan *query, 16),
 	}
 	go local.mainloop()
+
+}
+func ListenInit() error {
 	if err := local.listen(ipv4mcastaddr); err != nil {
-		log.Fatalf("Failed to listen %s: %s", ipv4mcastaddr, err)
+		return errors.New(fmt.Sprintf("Failed to listen %s: %s", ipv4mcastaddr, err))
 	}
 	if err := local.listen(ipv6mcastaddr); err != nil {
-		log.Printf("Failed to listen %s: %s", ipv6mcastaddr, err)
+		return errors.New(fmt.Sprintf("Failed to listen %s: %s", ipv6mcastaddr, err))
 	}
 
 	// publish gmx stats for the local zone
@@ -44,7 +49,7 @@ func init() {
 	gmx.Publish("mdns.zone.local.entries", func() interface{} {
 		return local.entryCount
 	})
-
+	return nil
 }
 
 // Publish adds a record, described in RFC XXX
@@ -210,7 +215,7 @@ func (c *connector) mainloop() {
 			// nuke questions
 			msg.Question = nil
 			if err := c.writeMessage(msg.Msg, msg.UDPAddr); err != nil {
-				log.Fatalf("Cannot send: %s", err)
+				log.Printf("Cannot send: %s", err)
 			}
 		}
 	}
