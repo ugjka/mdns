@@ -1,8 +1,9 @@
 package main
 
 import (
-	"github.com/davecheney/mdns"
 	"log"
+
+	"github.com/ugjka/mdns"
 )
 
 func mustPublish(rr string) {
