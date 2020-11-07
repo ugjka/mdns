@@ -13,7 +13,8 @@ func mustPublish(zone *mdns.Zone, rr string) {
 }
 
 func main() {
-	zone, err := mdns.New()
+	//In New we enable ipv4 and disable ipv6
+	zone, err := mdns.New(true, false)
 	if err != nil {
 		log.Fatal(err)
 	}

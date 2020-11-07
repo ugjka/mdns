@@ -22,7 +22,8 @@ Publishing mDNS records is simple
 import "github.com/ugjka/mdns"
 
 func main(){
-    zone, err := mdns.New()
+                        //ipv4  ipv6
+    zone, err := mdns.New(true, false)
     if err != nil {
             log.Fatal(err)
     }
