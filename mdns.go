@@ -178,11 +178,8 @@ type pkt struct {
 
 func (c *connector) readloop(in chan pkt) {
 	for {
-		msg, addr, err := c.readMessage()
-		if err != nil {
-			continue
-		}
-		if len(msg.Question) > 0 {
+		msg, addr, _ := c.readMessage()
+		if nil != msg && len(msg.Question) > 0 {
 			in <- pkt{msg, addr}
 		}
 	}
