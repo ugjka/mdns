@@ -22,22 +22,39 @@ var (
 	}
 )
 
-// New initialized zone.
-func New() (*Zone, error) {
+// New initializes a new zone.
+func New(ipv4, ipv6 bool) (*Zone, error) {
 	z := &Zone{
 		entries: make(map[string]entries),
 		add:     make(chan *entry),
 		remove:  make(chan *entry),
 		queries: make(chan *query, 16),
 	}
+	if err := listenInit(ipv4, ipv6, z); err != nil {
+		return nil, err
+	}
 	go z.mainloop()
-	if err := z.listen(ipv4mcastaddr); err != nil {
-		return nil, fmt.Errorf("Failed to listen %s: %s", ipv4mcastaddr, err)
+
+	return z, nil
+}
+
+func listenInit(ipv4, ipv6 bool, zone *Zone) error {
+	if ipv4 == false && ipv6 == false {
+		return fmt.Errorf("neither ipv4 nor ipv6 set")
 	}
 
-	// if we cannot listen, ignore, we really don't care about ipv6 right now
-	z.listen(ipv6mcastaddr)
-	return z, nil
+	if ipv4 {
+		if err := zone.listen(ipv4mcastaddr); err != nil {
+			return fmt.Errorf("ipv4 listen failed: %s", err)
+		}
+	}
+
+	if ipv6 {
+		if err := zone.listen(ipv6mcastaddr); err != nil {
+			return fmt.Errorf("ipv6 listen failed: %s", err)
+		}
+	}
+	return nil
 }
 
 type entry struct {
@@ -199,7 +216,7 @@ func (c *connector) mainloop() {
 			// nuke questions
 			msg.Question = nil
 			if err := c.writeMessage(msg.Msg, msg.UDPAddr); err != nil {
-				log.Fatalf("Cannot send: %s", err)
+				log.Printf("Cannot send: %s", err)
 			}
 		}
 	}
