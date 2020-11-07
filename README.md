@@ -10,7 +10,7 @@ Thanks to Brian Ketelsen and Miek Gieben for their feedback and suggestions. Thi
 
 This package can be installed using:
 
-    go get github.com/ugjka/mdns
+`go get github.com/ugjka/mdns`
 
 For development, this package is developed with John Asmuths excellent gb utility.
 
@@ -18,6 +18,14 @@ For development, this package is developed with John Asmuths excellent gb utilit
 
 Publishing mDNS records is simple
 
-    import "github.com/ugjka/mdns"
+```go
+import "github.com/ugjka/mdns"
 
-    mdns.Publish("yourhost.local 60 IN A 192.168.1.100")
+func main(){
+    zone, err := mdns.New()
+    if err != nil {
+            log.Fatal(err)
+    }
+    zone.Publish("yourhost.local 60 IN A 192.168.1.100")
+}
+```
