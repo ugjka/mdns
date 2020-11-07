@@ -1,6 +1,6 @@
-package mdns
-
+// Package mdns ...
 // Advertise network services via multicast DNS
+package mdns
 
 import (
 	"fmt"
@@ -90,15 +90,6 @@ func (z *Zone) Unpublish(r string) error {
 	}
 	z.remove <- &entry{rr}
 	return nil
-}
-
-// UnpublishAll unpublishes all records
-func (z *Zone) UnpublishAll() {
-	for _, entries := range z.entries {
-		for _, entry := range entries {
-			z.remove <- entry
-		}
-	}
 }
 
 func (z *Zone) mainloop() {
