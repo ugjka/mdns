@@ -295,7 +295,6 @@ func (z *Zone) listen(addr *net.UDPAddr) error {
 		return err
 	}
 	c := &connector{
-		UDPAddr: addr,
 		UDPConn: conn,
 		Zone:    z,
 	}
@@ -314,12 +313,12 @@ func openSocket(addr *net.UDPAddr) (*net.UDPConn, error) {
 	}
 }
 
-type pkt struct {
+type packet struct {
 	*dns.Msg
 	*net.UDPAddr
 }
 
-func (c *connector) readloop(in chan pkt) {
+func (c *connector) readloop(in chan packet) {
 	defer c.Zone.wg.Done()
 	for {
 		msg, addr, err := c.readMessage()
@@ -327,7 +326,7 @@ func (c *connector) readloop(in chan pkt) {
 			return
 		}
 		if nil != msg && len(msg.Question) > 0 {
-			in <- pkt{msg, addr}
+			in <- packet{msg, addr}
 		}
 	}
 }
@@ -343,10 +342,10 @@ func queryZone(z *Zone, q dns.Question) (entries []dns.RR) {
 
 func (c *connector) mainloop() {
 	defer c.Zone.wg.Done()
-	in := make(chan pkt, 32)
+	in := make(chan packet, 32)
 	go c.readloop(in)
 	for {
-		var msg pkt
+		var msg packet
 		select {
 		case msg = <-in:
 		case <-c.Zone.shutdown:
