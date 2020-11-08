@@ -16,7 +16,7 @@ import (
 
 // Zone holds all published entries.
 type Zone struct {
-	records   map[string]map[dns.RR]struct{}
+	domains   map[string]map[dns.RR]struct{}
 	add       chan dns.RR
 	remove    chan dns.RR
 	broadcast chan chan []dns.RR
@@ -32,7 +32,7 @@ type Zone struct {
 // New initializes a new zone.
 func New(ipv4, ipv6 bool) (*Zone, error) {
 	z := &Zone{
-		records:   make(map[string]map[dns.RR]struct{}),
+		domains:   make(map[string]map[dns.RR]struct{}),
 		add:       make(chan dns.RR),
 		remove:    make(chan dns.RR),
 		broadcast: make(chan chan []dns.RR),
@@ -131,19 +131,19 @@ func (z *Zone) mainloop() {
 	for {
 		select {
 		case rr := <-z.add:
-			if records, ok := z.records[fqdn(rr)]; ok {
-				if !contains(records, rr) {
-					records[rr] = struct{}{}
+			if domain, ok := z.domains[fqdn(rr)]; ok {
+				if !contains(domain, rr) {
+					domain[rr] = struct{}{}
 				}
 			} else {
-				z.records[fqdn(rr)] = make(map[dns.RR]struct{})
-				z.records[fqdn(rr)][rr] = struct{}{}
+				z.domains[fqdn(rr)] = make(map[dns.RR]struct{})
+				z.domains[fqdn(rr)][rr] = struct{}{}
 			}
 		case rr := <-z.remove:
-			if records, ok := z.records[fqdn(rr)]; ok {
-				for v := range records {
+			if domain, ok := z.domains[fqdn(rr)]; ok {
+				for v := range domain {
 					if dns.IsDuplicate(v, rr) {
-						delete(records, v)
+						delete(domain, v)
 						resp := new(dns.Msg)
 						resp.MsgHdr.Response = true
 						resp.Answer = []dns.RR{null(v)}
@@ -152,7 +152,7 @@ func (z *Zone) mainloop() {
 				}
 			}
 		case q := <-z.queries:
-			for rr := range z.records[q.Question.Name] {
+			for rr := range z.domains[q.Question.Name] {
 				if matches(q.Question, rr) {
 					q.result <- rr
 				}
@@ -160,7 +160,7 @@ func (z *Zone) mainloop() {
 			close(q.result)
 		case i := <-z.broadcast:
 			var out []dns.RR
-			for _, items := range z.records {
+			for _, items := range z.domains {
 				for rr := range items {
 					out = append(out, rr)
 				}
@@ -169,7 +169,7 @@ func (z *Zone) mainloop() {
 			close(i)
 		case i := <-z.destroy:
 			var out []dns.RR
-			for _, items := range z.records {
+			for _, items := range z.domains {
 				for rr := range items {
 					out = append(out, rr)
 				}
