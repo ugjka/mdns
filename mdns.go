@@ -72,12 +72,14 @@ func listenInit(ipv4, ipv6 bool, zone *Zone) error {
 		if err := zone.listen(ipv4mcastaddr); err != nil {
 			return fmt.Errorf("ipv4 listen failed: %s", err)
 		}
+		zone.wg.Add(2)
 	}
 
 	if ipv6 {
 		if err := zone.listen(ipv6mcastaddr); err != nil {
 			return fmt.Errorf("ipv6 listen failed: %s", err)
 		}
+		zone.wg.Add(2)
 	}
 	return nil
 }
@@ -240,7 +242,7 @@ func null(rr dns.RR) dns.RR {
 		i.Hdr.Ttl = 0
 		return i
 	default:
-		log.Printf("Nullifying %s not implemented", i.String())
+		log.Printf("Nullifying %s not implemented", i)
 		return i
 	}
 }
@@ -284,7 +286,6 @@ func matches(question dns.Question, entry dns.RR) bool {
 }
 
 type connector struct {
-	*net.UDPAddr
 	*net.UDPConn
 	*Zone
 }
@@ -298,7 +299,6 @@ func (z *Zone) listen(addr *net.UDPAddr) error {
 		UDPConn: conn,
 		Zone:    z,
 	}
-	z.wg.Add(2)
 	go c.mainloop()
 
 	return nil
@@ -365,7 +365,7 @@ func (c *connector) mainloop() {
 			// nuke questions
 			msg.Question = nil
 			if err := c.writeMessage(msg.Msg, msg.UDPAddr); err != nil {
-				log.Printf("Cannot send: %s", err)
+				log.Printf("cannot send: %s", err)
 			}
 		}
 	}
