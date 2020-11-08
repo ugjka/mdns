@@ -25,7 +25,7 @@ var (
 // New initializes a new zone.
 func New(ipv4, ipv6 bool) (*Zone, error) {
 	z := &Zone{
-		entries: make(map[string]entries),
+		records: make(map[string]map[*entry]struct{}),
 		add:     make(chan *entry),
 		remove:  make(chan *entry),
 		queries: make(chan *query, 16),
@@ -72,18 +72,9 @@ type query struct {
 
 type entries []*entry
 
-func (e entries) contains(entry *entry) bool {
-	for _, ee := range e {
-		if equals(entry, ee) {
-			return true
-		}
-	}
-	return false
-}
-
 // Zone holds all published entries.
 type Zone struct {
-	entries map[string]entries
+	records map[string]map[*entry]struct{}
 	add     chan *entry // add entries to zone
 	queries chan *query // query exsting entries in zone
 	remove  chan *entry // remove entries from zone
@@ -109,31 +100,39 @@ func (z *Zone) Unpublish(r string) error {
 	return nil
 }
 
+func contains(entries map[*entry]struct{}, entry *entry) bool {
+	for v := range entries {
+		if dns.IsDuplicate(v, entry) {
+			return true
+		}
+	}
+	return false
+}
+
 func (z *Zone) mainloop() {
 	for {
 		select {
-		case entry := <-z.add:
-			if !z.entries[entry.fqdn()].contains(entry) {
-				z.entries[entry.fqdn()] = append(z.entries[entry.fqdn()], entry)
-			}
-		case entry := <-z.remove:
-			if _, ok := z.entries[entry.fqdn()]; ok {
-				tmp := z.entries[entry.fqdn()][:0]
-				for _, e := range z.entries[entry.fqdn()] {
-					if !equals(entry, e) {
-						tmp = append(tmp, e)
-					}
+		case record := <-z.add:
+			if records, ok := z.records[record.fqdn()]; ok {
+				if !contains(records, record) {
+					records[record] = struct{}{}
 				}
-
-				z.entries[entry.fqdn()] = tmp
-				if len(z.entries[entry.fqdn()]) == 0 {
-					delete(z.entries, entry.fqdn())
+			} else {
+				z.records[record.fqdn()] = make(map[*entry]struct{})
+				z.records[record.fqdn()][record] = struct{}{}
+			}
+		case record := <-z.remove:
+			if records, ok := z.records[record.fqdn()]; ok {
+				for v := range records {
+					if dns.IsDuplicate(v, record) {
+						delete(records, v)
+					}
 				}
 			}
 		case q := <-z.queries:
-			for _, entry := range z.entries[q.Question.Name] {
-				if q.matches(entry) {
-					q.result <- entry
+			for record := range z.records[q.Question.Name] {
+				if matches(q.Question, record) {
+					q.result <- record
 				}
 			}
 			close(q.result)
@@ -141,7 +140,7 @@ func (z *Zone) mainloop() {
 	}
 }
 
-func (z *Zone) query(q dns.Question) (entries []*entry) {
+func queryZone(z *Zone, q dns.Question) (entries []*entry) {
 	res := make(chan *entry, 16)
 	z.queries <- &query{q, res}
 	for e := range res {
@@ -150,12 +149,8 @@ func (z *Zone) query(q dns.Question) (entries []*entry) {
 	return
 }
 
-func (q *query) matches(entry *entry) bool {
-	return q.Question.Qtype == dns.TypeANY || q.Question.Qtype == entry.RR.Header().Rrtype
-}
-
-func equals(this, that *entry) bool {
-	return dns.IsDuplicate(this.RR, that.RR)
+func matches(question dns.Question, entry *entry) bool {
+	return question.Qtype == dns.TypeANY || question.Qtype == entry.RR.Header().Rrtype
 }
 
 type connector struct {
@@ -208,7 +203,11 @@ func (c *connector) mainloop() {
 	for {
 		msg := <-in
 		msg.MsgHdr.Response = true // convert question to response
-		for _, result := range c.query(msg.Question) {
+		var results entries
+		for _, q := range msg.Question {
+			results = append(results, queryZone(c.Zone, q)...)
+		}
+		for _, result := range results {
 			msg.Answer = append(msg.Answer, result.RR)
 		}
 		msg.Extra = append(msg.Extra, c.findExtra(msg.Answer...)...)
@@ -220,13 +219,6 @@ func (c *connector) mainloop() {
 			}
 		}
 	}
-}
-
-func (c *connector) query(qs []dns.Question) (results []*entry) {
-	for _, q := range qs {
-		results = append(results, c.Zone.query(q)...)
-	}
-	return
 }
 
 // recursively probe for related records
@@ -249,7 +241,7 @@ func (c *connector) findExtra(r ...dns.RR) (extra []dns.RR) {
 		default:
 			continue
 		}
-		res := c.Zone.query(q)
+		res := queryZone(c.Zone, q)
 		if len(res) > 0 {
 			for _, entry := range res {
 				extra = append(append(extra, entry.RR), c.findExtra(entry.RR)...)
