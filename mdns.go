@@ -14,31 +14,23 @@ import (
 	"golang.org/x/net/ipv6"
 )
 
-var (
-	ipv4mcastaddr = &net.UDPAddr{
-		IP:   net.ParseIP("224.0.0.251"),
-		Port: 5353,
-	}
-
-	ipv6mcastaddr = &net.UDPAddr{
-		IP:   net.ParseIP("ff02::fb"),
-		Port: 5353,
-	}
-)
-
 // Zone holds all published entries.
 type Zone struct {
 	records   map[string]map[*entry]struct{}
 	add       chan *entry // add entries to zone
-	queries   chan *query // query exsting entries in zone
 	remove    chan *entry // remove entries from zone
 	broadcast chan records
-	unpublish chan records
+	destroy   chan records
+	queries   chan *query // query exsting entries in zone
 	ifaces    []net.Interface
 	net4      *ipv4.PacketConn
 	net6      *ipv6.PacketConn
 	wg        sync.WaitGroup
 	shutdown  chan struct{}
+}
+
+type records struct {
+	items chan []dns.RR
 }
 
 // New initializes a new zone.
@@ -47,9 +39,9 @@ func New(ipv4, ipv6 bool) (*Zone, error) {
 		records:   make(map[string]map[*entry]struct{}),
 		add:       make(chan *entry),
 		remove:    make(chan *entry),
-		queries:   make(chan *query, 16),
 		broadcast: make(chan records),
-		unpublish: make(chan records),
+		destroy:   make(chan records),
+		queries:   make(chan *query, 16),
 		shutdown:  make(chan struct{}),
 	}
 	if err := listenInit(ipv4, ipv6, z); err != nil {
@@ -71,7 +63,7 @@ func New(ipv4, ipv6 bool) (*Zone, error) {
 	}
 	z.wg.Add(2)
 	go z.mainloop()
-	go z.annnounce()
+	go z.bcastEntries()
 	return z, nil
 }
 
@@ -94,20 +86,20 @@ func listenInit(ipv4, ipv6 bool, zone *Zone) error {
 	return nil
 }
 
-type entry struct {
-	dns.RR
-}
-
-func (e *entry) fqdn() string {
-	return e.Header().Name
-}
-
 type query struct {
 	dns.Question
 	result chan *entry
 }
 
+type entry struct {
+	dns.RR
+}
+
 type entries []*entry
+
+func (e *entry) fqdn() string {
+	return e.Header().Name
+}
 
 // Publish adds a record, described in RFC XXX
 func (z *Zone) Publish(r string) error {
@@ -126,19 +118,12 @@ func (z *Zone) Unpublish(r string) error {
 		return err
 	}
 	z.remove <- &entry{rr}
-	resp := new(dns.Msg)
-	resp.MsgHdr.Response = true
-	resp.Answer = []dns.RR{null(rr)}
-	for i := 0; i < 5; i++ {
-		z.multicastResponse(resp, 0)
-		time.Sleep(time.Millisecond * 100)
-	}
 	return nil
 }
 
 // Shutdown shuts down a zone
 func (z *Zone) Shutdown() {
-	z.clear()
+	z.nullEntries()
 	z.wg.Wait()
 }
 
@@ -169,6 +154,10 @@ func (z *Zone) mainloop() {
 				for v := range records {
 					if dns.IsDuplicate(v, record) {
 						delete(records, v)
+						resp := new(dns.Msg)
+						resp.MsgHdr.Response = true
+						resp.Answer = []dns.RR{null(v)}
+						z.multicastResponse(resp, 0)
 					}
 				}
 			}
@@ -188,7 +177,7 @@ func (z *Zone) mainloop() {
 			}
 			i.items <- out
 			close(i.items)
-		case i := <-z.unpublish:
+		case i := <-z.destroy:
 			var out []dns.RR
 			for _, items := range z.records {
 				for item := range items {
@@ -203,11 +192,7 @@ func (z *Zone) mainloop() {
 	}
 }
 
-type records struct {
-	items chan []dns.RR
-}
-
-func (z *Zone) annnounce() {
+func (z *Zone) bcastEntries() {
 	defer z.wg.Done()
 	for {
 		time.Sleep(time.Second * 1)
@@ -225,9 +210,9 @@ func (z *Zone) annnounce() {
 	}
 }
 
-func (z *Zone) clear() {
+func (z *Zone) nullEntries() {
 	items := make(chan []dns.RR)
-	z.unpublish <- records{items: items}
+	z.destroy <- records{items: items}
 	var nullified []dns.RR
 	for _, v := range <-items {
 		nullified = append(nullified, null(v))
@@ -304,15 +289,6 @@ func (z *Zone) multicastResponse(msg *dns.Msg, ifIndex int) error {
 	return nil
 }
 
-func queryZone(z *Zone, q dns.Question) (entries []*entry) {
-	res := make(chan *entry, 16)
-	z.queries <- &query{q, res}
-	for e := range res {
-		entries = append(entries, e)
-	}
-	return
-}
-
 func matches(question dns.Question, entry *entry) bool {
 	return question.Qtype == dns.TypeANY || question.Qtype == entry.RR.Header().Rrtype
 }
@@ -364,6 +340,15 @@ func (c *connector) readloop(in chan pkt) {
 			in <- pkt{msg, addr}
 		}
 	}
+}
+
+func queryZone(z *Zone, q dns.Question) (entries []*entry) {
+	res := make(chan *entry, 16)
+	z.queries <- &query{q, res}
+	for e := range res {
+		entries = append(entries, e)
+	}
+	return
 }
 
 func (c *connector) mainloop() {
