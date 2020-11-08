@@ -371,7 +371,7 @@ func (c *connector) mainloop() {
 		for _, result := range results {
 			msg.Answer = append(msg.Answer, result.RR)
 		}
-		msg.Extra = append(msg.Extra, c.findExtra(msg.Answer...)...)
+		msg.Extra = []dns.RR{}
 		if len(msg.Answer) > 0 {
 			// nuke questions
 			msg.Question = nil
@@ -380,36 +380,6 @@ func (c *connector) mainloop() {
 			}
 		}
 	}
-}
-
-// recursively probe for related records
-func (c *connector) findExtra(r ...dns.RR) (extra []dns.RR) {
-	for _, rr := range r {
-		var q dns.Question
-		switch rr := rr.(type) {
-		case *dns.PTR:
-			q = dns.Question{
-				Name:   rr.Ptr,
-				Qtype:  dns.TypeANY,
-				Qclass: dns.ClassINET,
-			}
-		case *dns.SRV:
-			q = dns.Question{
-				Name:   rr.Target,
-				Qtype:  dns.TypeA,
-				Qclass: dns.ClassINET,
-			}
-		default:
-			continue
-		}
-		res := queryZone(c.Zone, q)
-		if len(res) > 0 {
-			for _, entry := range res {
-				extra = append(append(extra, entry.RR), c.findExtra(entry.RR)...)
-			}
-		}
-	}
-	return
 }
 
 // encode an mdns msg and broadcast it on the wire
