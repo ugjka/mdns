@@ -2,6 +2,9 @@ package main
 
 import (
 	"log"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/ugjka/mdns"
 )
@@ -42,5 +45,10 @@ func main() {
 	// Bind this service into the list of registered services for dns-sd.
 	mustPublish(zone, "_services._dns-sd._udp.local. 60 IN PTR _ssh._tcp.local.")
 
-	select {}
+	// Clean exit.
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+	<-sig
+	log.Println("Shutting down.")
+	zone.Shutdown()
 }
