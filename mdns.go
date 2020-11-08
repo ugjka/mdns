@@ -16,11 +16,11 @@ import (
 
 // Zone holds all published entries.
 type Zone struct {
-	records   map[string]map[*entry]struct{}
-	add       chan *entry // add entries to zone
-	remove    chan *entry // remove entries from zone
-	broadcast chan records
-	destroy   chan records
+	records   map[string]map[dns.RR]struct{}
+	add       chan dns.RR
+	remove    chan dns.RR
+	broadcast chan chan []dns.RR
+	destroy   chan chan []dns.RR
 	queries   chan *query // query exsting entries in zone
 	ifaces    []net.Interface
 	net4      *ipv4.PacketConn
@@ -29,18 +29,14 @@ type Zone struct {
 	shutdown  chan struct{}
 }
 
-type records struct {
-	items chan []dns.RR
-}
-
 // New initializes a new zone.
 func New(ipv4, ipv6 bool) (*Zone, error) {
 	z := &Zone{
-		records:   make(map[string]map[*entry]struct{}),
-		add:       make(chan *entry),
-		remove:    make(chan *entry),
-		broadcast: make(chan records),
-		destroy:   make(chan records),
+		records:   make(map[string]map[dns.RR]struct{}),
+		add:       make(chan dns.RR),
+		remove:    make(chan dns.RR),
+		broadcast: make(chan chan []dns.RR),
+		destroy:   make(chan chan []dns.RR),
 		queries:   make(chan *query, 16),
 		shutdown:  make(chan struct{}),
 	}
@@ -88,16 +84,10 @@ func listenInit(ipv4, ipv6 bool, zone *Zone) error {
 
 type query struct {
 	dns.Question
-	result chan *entry
+	result chan dns.RR
 }
 
-type entry struct {
-	dns.RR
-}
-
-type entries []*entry
-
-func (e *entry) fqdn() string {
+func fqdn(e dns.RR) string {
 	return e.Header().Name
 }
 
@@ -107,7 +97,7 @@ func (z *Zone) Publish(r string) error {
 	if err != nil {
 		return err
 	}
-	z.add <- &entry{rr}
+	z.add <- rr
 	return nil
 }
 
@@ -117,7 +107,7 @@ func (z *Zone) Unpublish(r string) error {
 	if err != nil {
 		return err
 	}
-	z.remove <- &entry{rr}
+	z.remove <- rr
 	return nil
 }
 
@@ -127,7 +117,7 @@ func (z *Zone) Shutdown() {
 	z.wg.Wait()
 }
 
-func contains(entries map[*entry]struct{}, entry *entry) bool {
+func contains(entries map[dns.RR]struct{}, entry dns.RR) bool {
 	for v := range entries {
 		if dns.IsDuplicate(v, entry) {
 			return true
@@ -140,19 +130,19 @@ func (z *Zone) mainloop() {
 	defer z.wg.Done()
 	for {
 		select {
-		case record := <-z.add:
-			if records, ok := z.records[record.fqdn()]; ok {
-				if !contains(records, record) {
-					records[record] = struct{}{}
+		case rr := <-z.add:
+			if records, ok := z.records[fqdn(rr)]; ok {
+				if !contains(records, rr) {
+					records[rr] = struct{}{}
 				}
 			} else {
-				z.records[record.fqdn()] = make(map[*entry]struct{})
-				z.records[record.fqdn()][record] = struct{}{}
+				z.records[fqdn(rr)] = make(map[dns.RR]struct{})
+				z.records[fqdn(rr)][rr] = struct{}{}
 			}
-		case record := <-z.remove:
-			if records, ok := z.records[record.fqdn()]; ok {
+		case rr := <-z.remove:
+			if records, ok := z.records[fqdn(rr)]; ok {
 				for v := range records {
-					if dns.IsDuplicate(v, record) {
+					if dns.IsDuplicate(v, rr) {
 						delete(records, v)
 						resp := new(dns.Msg)
 						resp.MsgHdr.Response = true
@@ -162,30 +152,30 @@ func (z *Zone) mainloop() {
 				}
 			}
 		case q := <-z.queries:
-			for record := range z.records[q.Question.Name] {
-				if matches(q.Question, record) {
-					q.result <- record
+			for rr := range z.records[q.Question.Name] {
+				if matches(q.Question, rr) {
+					q.result <- rr
 				}
 			}
 			close(q.result)
 		case i := <-z.broadcast:
 			var out []dns.RR
 			for _, items := range z.records {
-				for item := range items {
-					out = append(out, item.RR)
+				for rr := range items {
+					out = append(out, rr)
 				}
 			}
-			i.items <- out
-			close(i.items)
+			i <- out
+			close(i)
 		case i := <-z.destroy:
 			var out []dns.RR
 			for _, items := range z.records {
-				for item := range items {
-					out = append(out, item.RR)
+				for rr := range items {
+					out = append(out, rr)
 				}
 			}
-			i.items <- out
-			close(i.items)
+			i <- out
+			close(i)
 			close(z.shutdown)
 			return
 		}
@@ -196,25 +186,25 @@ func (z *Zone) bcastEntries() {
 	defer z.wg.Done()
 	for {
 		time.Sleep(time.Second * 1)
-		items := make(chan []dns.RR)
+		entries := make(chan []dns.RR)
 		select {
-		case z.broadcast <- records{items: items}:
+		case z.broadcast <- entries:
 		case <-z.shutdown:
 			return
 		}
 		resp := new(dns.Msg)
 		resp.MsgHdr.Response = true
-		resp.Answer = <-items
+		resp.Answer = <-entries
 		z.multicastResponse(resp, 0)
 		time.Sleep(time.Second * 4)
 	}
 }
 
 func (z *Zone) nullEntries() {
-	items := make(chan []dns.RR)
-	z.destroy <- records{items: items}
+	entries := make(chan []dns.RR)
+	z.destroy <- entries
 	var nullified []dns.RR
-	for _, v := range <-items {
+	for _, v := range <-entries {
 		nullified = append(nullified, null(v))
 	}
 	resp := new(dns.Msg)
@@ -289,8 +279,8 @@ func (z *Zone) multicastResponse(msg *dns.Msg, ifIndex int) error {
 	return nil
 }
 
-func matches(question dns.Question, entry *entry) bool {
-	return question.Qtype == dns.TypeANY || question.Qtype == entry.RR.Header().Rrtype
+func matches(question dns.Question, entry dns.RR) bool {
+	return question.Qtype == dns.TypeANY || question.Qtype == entry.Header().Rrtype
 }
 
 type connector struct {
@@ -342,8 +332,8 @@ func (c *connector) readloop(in chan pkt) {
 	}
 }
 
-func queryZone(z *Zone, q dns.Question) (entries []*entry) {
-	res := make(chan *entry, 16)
+func queryZone(z *Zone, q dns.Question) (entries []dns.RR) {
+	res := make(chan dns.RR, 16)
 	z.queries <- &query{q, res}
 	for e := range res {
 		entries = append(entries, e)
@@ -364,12 +354,12 @@ func (c *connector) mainloop() {
 			return
 		}
 		msg.MsgHdr.Response = true // convert question to response
-		var results entries
+		var results []dns.RR
 		for _, q := range msg.Question {
 			results = append(results, queryZone(c.Zone, q)...)
 		}
-		for _, result := range results {
-			msg.Answer = append(msg.Answer, result.RR)
+		for _, rr := range results {
+			msg.Answer = append(msg.Answer, rr)
 		}
 		msg.Extra = []dns.RR{}
 		if len(msg.Answer) > 0 {
