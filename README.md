@@ -1,4 +1,9 @@
-# Introduction
+# MDNS
+
+[![GoDoc](https://godoc.org/github.com/ugjka/mdns?status.png)](https://godoc.org/github.com/ugjka/mdns)
+[![Donate](paypal.svg?raw=true)](https://www.paypal.me/ugjka)
+
+## Introduction
 
 This package allows Go processes to publish multicast DNS style records onto their local network segment. For more information about mDNS, and it's closely related cousin, Zeroconf, please visit <http://www.multicastdns.org/>.
 

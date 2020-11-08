@@ -126,6 +126,13 @@ func (z *Zone) Unpublish(r string) error {
 		return err
 	}
 	z.remove <- &entry{rr}
+	resp := new(dns.Msg)
+	resp.MsgHdr.Response = true
+	resp.Answer = []dns.RR{null(rr)}
+	for i := 0; i < 5; i++ {
+		z.multicastResponse(resp, 0)
+		time.Sleep(time.Millisecond * 100)
+	}
 	return nil
 }
 
@@ -223,26 +230,7 @@ func (z *Zone) clear() {
 	z.unpublish <- records{items: items}
 	var nullified []dns.RR
 	for _, v := range <-items {
-		switch i := v.(type) {
-		case *dns.A:
-			i.Hdr.Ttl = 0
-			nullified = append(nullified, i)
-		case *dns.AAAA:
-			i.Hdr.Ttl = 0
-			nullified = append(nullified, i)
-		case *dns.SRV:
-			i.Hdr.Ttl = 0
-			nullified = append(nullified, i)
-		case *dns.PTR:
-			i.Hdr.Ttl = 0
-			nullified = append(nullified, i)
-		case *dns.TXT:
-			i.Hdr.Ttl = 0
-			nullified = append(nullified, i)
-		default:
-			log.Printf("Nullifying %s not implemented", i.String())
-			nullified = append(nullified, i)
-		}
+		nullified = append(nullified, null(v))
 	}
 	resp := new(dns.Msg)
 	resp.MsgHdr.Response = true
@@ -256,6 +244,29 @@ func (z *Zone) clear() {
 	}
 	if z.net6 != nil {
 		z.net6.Close()
+	}
+}
+
+func null(rr dns.RR) dns.RR {
+	switch i := rr.(type) {
+	case *dns.A:
+		i.Hdr.Ttl = 0
+		return i
+	case *dns.AAAA:
+		i.Hdr.Ttl = 0
+		return i
+	case *dns.SRV:
+		i.Hdr.Ttl = 0
+		return i
+	case *dns.PTR:
+		i.Hdr.Ttl = 0
+		return i
+	case *dns.TXT:
+		i.Hdr.Ttl = 0
+		return i
+	default:
+		log.Printf("Nullifying %s not implemented", i.String())
+		return i
 	}
 }
 
