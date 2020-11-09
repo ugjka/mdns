@@ -192,6 +192,7 @@ func (z *Zone) bcastEntries() {
 		if sleep < time.Second*10 {
 			sleep *= 2
 		}
+		z.ifaces = listMulticastInterfaces()
 		entries := make(chan []dns.RR)
 		select {
 		case z.broadcast <- entries:
