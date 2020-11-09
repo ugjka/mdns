@@ -25,7 +25,7 @@ func main() {
 	mustPublish(zone, "router.local. 60 IN A 192.168.1.254")
 	mustPublish(zone, "254.1.168.192.in-addr.arpa. 60 IN PTR router.local.")
 
-	// A more compilcated example. Publish a SVR record for ssh running on port
+	// A more complicated example. Publish a SVR record for ssh running on port
 	// 22 for my home NAS.
 
 	// Publish an A record as before
