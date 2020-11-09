@@ -8,10 +8,6 @@
 
 This package allows Go processes to publish multicast DNS style records onto their local network segment. For more information about mDNS, and it's closely related cousin, Zeroconf, please visit <http://www.multicastdns.org/>.
 
-## Acknowledgements
-
-Thanks to Brian Ketelsen and Miek Gieben for their feedback and suggestions. This package builds on Miek's fantastic godns library and would not have been possible without it.
-
 ## Installation
 
 This package can be installed using:
