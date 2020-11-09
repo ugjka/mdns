@@ -58,6 +58,9 @@ func New(ipv4, ipv6 bool) (*Zone, error) {
 
 func (z *Zone) joinMulticast() error {
 	z.ifaces = listMulticastInterfaces()
+	if z.ifaces == nil || len(z.ifaces) == 0 {
+		return fmt.Errorf("no interfaces found")
+	}
 	var err error
 	if z.ipv4 {
 		z.net4, err = joinUDP4Multicast(z.ifaces)
@@ -166,7 +169,11 @@ func (z *Zone) mainloop() {
 							if err == nil {
 								break
 							}
-							time.Sleep(timeout)
+							select {
+							case <-z.shutdown:
+								return
+							case <-time.NewTimer(timeout).C:
+							}
 							if timeout < time.Second*20 {
 								timeout *= 2
 							}
@@ -209,7 +216,6 @@ func (z *Zone) mainloop() {
 func (z *Zone) bcastEntries() {
 	defer z.wg.Done()
 	for {
-		time.Sleep(time.Second)
 		entries := make(chan []dns.RR)
 		select {
 		case z.broadcast <- entries:
@@ -223,7 +229,11 @@ func (z *Zone) bcastEntries() {
 		if err != nil {
 			z.joinMulticast()
 		}
-		time.Sleep(time.Second * 4)
+		select {
+		case <-z.shutdown:
+			return
+		case <-time.NewTimer(time.Second * 5).C:
+		}
 	}
 }
 
@@ -243,7 +253,11 @@ func (z *Zone) nullEntries() {
 		if err == nil {
 			break
 		}
-		time.Sleep(timeout)
+		select {
+		case <-z.shutdown:
+			return
+		case <-time.NewTimer(timeout).C:
+		}
 		if timeout < time.Second*20 {
 			timeout *= 2
 		}
