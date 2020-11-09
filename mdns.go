@@ -21,7 +21,7 @@ type Zone struct {
 	remove    chan dns.RR
 	broadcast chan chan []dns.RR
 	destroy   chan chan []dns.RR
-	queries   chan *query // query exsting entries in zone
+	lookup    chan *query // query exsting entries in zone
 	ifaces    []net.Interface
 	net4      *ipv4.PacketConn
 	net6      *ipv6.PacketConn
@@ -37,7 +37,7 @@ func New(ipv4, ipv6 bool) (*Zone, error) {
 		remove:    make(chan dns.RR),
 		broadcast: make(chan chan []dns.RR),
 		destroy:   make(chan chan []dns.RR),
-		queries:   make(chan *query, 16),
+		lookup:    make(chan *query, 16),
 		shutdown:  make(chan struct{}),
 	}
 	if err := listenInit(ipv4, ipv6, z); err != nil {
@@ -85,12 +85,12 @@ func listenInit(ipv4, ipv6 bool, zone *Zone) error {
 }
 
 type query struct {
-	dns.Question
-	result chan dns.RR
+	question dns.Question
+	in       chan dns.RR
 }
 
-func fqdn(e dns.RR) string {
-	return e.Header().Name
+func fqdn(rr dns.RR) string {
+	return rr.Header().Name
 }
 
 // Publish adds a record, described in RFC XXX
@@ -120,8 +120,8 @@ func (z *Zone) Shutdown() {
 }
 
 func contains(entries map[dns.RR]struct{}, entry dns.RR) bool {
-	for v := range entries {
-		if dns.IsDuplicate(v, entry) {
+	for rr := range entries {
+		if dns.IsDuplicate(rr, entry) {
 			return true
 		}
 	}
@@ -149,17 +149,17 @@ func (z *Zone) mainloop() {
 						resp := new(dns.Msg)
 						resp.MsgHdr.Response = true
 						resp.Answer = []dns.RR{null(entry)}
-						z.multicastResponse(resp, 0)
+						z.multicastResponse(resp)
 					}
 				}
 			}
-		case query := <-z.queries:
-			for rr := range z.domains[query.Question.Name] {
-				if matches(query.Question, rr) {
-					query.result <- rr
+		case query := <-z.lookup:
+			for rr := range z.domains[query.question.Name] {
+				if matches(query.question, rr) {
+					query.in <- rr
 				}
 			}
-			close(query.result)
+			close(query.in)
 		case in := <-z.broadcast:
 			var out []dns.RR
 			for _, domain := range z.domains {
@@ -186,8 +186,12 @@ func (z *Zone) mainloop() {
 
 func (z *Zone) bcastEntries() {
 	defer z.wg.Done()
+	var sleep time.Duration = time.Second * 1
 	for {
-		time.Sleep(time.Second * 1)
+		time.Sleep(sleep)
+		if sleep < time.Second*10 {
+			sleep *= 2
+		}
 		entries := make(chan []dns.RR)
 		select {
 		case z.broadcast <- entries:
@@ -197,8 +201,7 @@ func (z *Zone) bcastEntries() {
 		resp := new(dns.Msg)
 		resp.MsgHdr.Response = true
 		resp.Answer = <-entries
-		z.multicastResponse(resp, 0)
-		time.Sleep(time.Second * 4)
+		z.multicastResponse(resp)
 	}
 }
 
@@ -212,9 +215,14 @@ func (z *Zone) nullEntries() {
 	resp := new(dns.Msg)
 	resp.MsgHdr.Response = true
 	resp.Answer = nullified
-	for i := 0; i < 5; i++ {
-		z.multicastResponse(resp, 0)
-		time.Sleep(time.Millisecond * 100)
+	var sleep time.Duration = time.Millisecond * 100
+	for {
+		time.Sleep(sleep)
+		sleep *= 2
+		if sleep > time.Second {
+			break
+		}
+		z.multicastResponse(resp)
 	}
 	if z.net4 != nil {
 		z.net4.Close()
@@ -242,40 +250,31 @@ func null(rr dns.RR) dns.RR {
 		i.Hdr.Ttl = 0
 		return i
 	default:
-		log.Printf("Nullifying %s not implemented", i)
+		log.Printf("nulling not implemented for: %s", i)
 		return i
 	}
 }
 
 // multicastResponse us used to send a multicast response packet
-func (z *Zone) multicastResponse(msg *dns.Msg, ifIndex int) error {
+func (z *Zone) multicastResponse(msg *dns.Msg) error {
 	buf, err := msg.Pack()
 	if err != nil {
 		return err
 	}
 	if z.net4 != nil {
 		var wcm ipv4.ControlMessage
-		if ifIndex != 0 {
-			wcm.IfIndex = ifIndex
+		for _, intf := range z.ifaces {
+			wcm.IfIndex = intf.Index
 			z.net4.WriteTo(buf, &wcm, ipv4Addr)
-		} else {
-			for _, intf := range z.ifaces {
-				wcm.IfIndex = intf.Index
-				z.net4.WriteTo(buf, &wcm, ipv4Addr)
-			}
 		}
+
 	}
 
 	if z.net6 != nil {
 		var wcm ipv6.ControlMessage
-		if ifIndex != 0 {
-			wcm.IfIndex = ifIndex
+		for _, intf := range z.ifaces {
+			wcm.IfIndex = intf.Index
 			z.net6.WriteTo(buf, &wcm, ipv6Addr)
-		} else {
-			for _, intf := range z.ifaces {
-				wcm.IfIndex = intf.Index
-				z.net6.WriteTo(buf, &wcm, ipv6Addr)
-			}
 		}
 	}
 	return nil
@@ -319,7 +318,7 @@ type packet struct {
 }
 
 func (c *connector) readloop(in chan packet) {
-	defer c.Zone.wg.Done()
+	defer c.wg.Done()
 	for {
 		msg, addr, err := c.readMessage()
 		if err != nil {
@@ -331,36 +330,34 @@ func (c *connector) readloop(in chan packet) {
 	}
 }
 
-func queryZone(z *Zone, q dns.Question) (entries []dns.RR) {
-	res := make(chan dns.RR, 16)
-	z.queries <- &query{q, res}
-	for e := range res {
-		entries = append(entries, e)
+func lookup(out chan *query, question dns.Question) (entries []dns.RR) {
+	in := make(chan dns.RR, 16)
+	out <- &query{question, in}
+	for rr := range in {
+		entries = append(entries, rr)
 	}
-	return
+	return entries
 }
 
 func (c *connector) mainloop() {
-	defer c.Zone.wg.Done()
+	defer c.wg.Done()
 	in := make(chan packet, 32)
 	go c.readloop(in)
 	for {
 		var msg packet
 		select {
 		case msg = <-in:
-		case <-c.Zone.shutdown:
-			c.UDPConn.Close()
+		case <-c.shutdown:
+			c.Close()
 			return
 		}
 		msg.MsgHdr.Response = true // convert question to response
-		var results []dns.RR
-		for _, q := range msg.Question {
-			results = append(results, queryZone(c.Zone, q)...)
+		var entries []dns.RR
+		for _, question := range msg.Question {
+			entries = append(entries, lookup(c.lookup, question)...)
 		}
-		for _, rr := range results {
-			msg.Answer = append(msg.Answer, rr)
-		}
-		msg.Extra = []dns.RR{}
+		msg.Answer = append(msg.Answer, entries...)
+		msg.Extra = nil
 		if len(msg.Answer) > 0 {
 			// nuke questions
 			msg.Question = nil
