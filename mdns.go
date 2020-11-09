@@ -14,6 +14,16 @@ import (
 	"golang.org/x/net/ipv6"
 )
 
+var delayer = make(chan struct{}, 1)
+
+// Prevent blasting zone announments at the same time
+// otherwise Avahi gets funky
+func delay() {
+	delayer <- struct{}{}
+	time.Sleep(time.Second)
+	<-delayer
+}
+
 // Zone holds all published entries.
 type Zone struct {
 	domains   map[string]map[dns.RR]struct{}
@@ -204,6 +214,7 @@ func (z *Zone) mainloop() {
 func (z *Zone) bcastEntries() {
 	defer z.wg.Done()
 	for {
+		delay()
 		entries := make(chan []dns.RR)
 		select {
 		case z.broadcast <- entries:
@@ -247,13 +258,13 @@ func (z *Zone) tryJoinMulticast() {
 func (z *Zone) nullAndClose() {
 	entries := make(chan []dns.RR)
 	z.destroy <- entries
-	var nullified []dns.RR
+	var nulled []dns.RR
 	for _, v := range <-entries {
-		nullified = append(nullified, null(v))
+		nulled = append(nulled, null(v))
 	}
 	resp := new(dns.Msg)
 	resp.MsgHdr.Response = true
-	resp.Answer = nullified
+	resp.Answer = nulled
 	z.multicastResponse(resp)
 	if z.net4 != nil {
 		z.net4.Close()
