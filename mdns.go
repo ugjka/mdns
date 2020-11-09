@@ -129,7 +129,7 @@ func (z *Zone) Unpublish(r string) error {
 
 // Shutdown shuts down a zone
 func (z *Zone) Shutdown() {
-	z.nullEntries()
+	z.nullAndClose()
 	z.wg.Wait()
 }
 
@@ -163,21 +163,9 @@ func (z *Zone) mainloop() {
 						resp := new(dns.Msg)
 						resp.MsgHdr.Response = true
 						resp.Answer = []dns.RR{null(entry)}
-						var timeout time.Duration = time.Second * 1
-						for {
-							err := z.multicastResponse(resp)
-							if err == nil {
-								break
-							}
-							select {
-							case <-z.shutdown:
-								return
-							case <-time.NewTimer(timeout).C:
-							}
-							if timeout < time.Second*20 {
-								timeout *= 2
-							}
-							z.joinMulticast()
+						err := z.multicastResponse(resp)
+						if err != nil {
+							log.Printf("could not null %s: %v", rr.String(), err)
 						}
 					}
 				}
@@ -227,7 +215,7 @@ func (z *Zone) bcastEntries() {
 		resp.Answer = <-entries
 		err := z.multicastResponse(resp)
 		if err != nil {
-			z.joinMulticast()
+			z.tryJoinMulticast()
 		}
 		select {
 		case <-z.shutdown:
@@ -237,7 +225,26 @@ func (z *Zone) bcastEntries() {
 	}
 }
 
-func (z *Zone) nullEntries() {
+func (z *Zone) tryJoinMulticast() {
+	var retry time.Duration = time.Second
+	for {
+		err := z.joinMulticast()
+		if err == nil {
+			return
+		}
+		select {
+		case <-z.shutdown:
+			return
+		case <-time.NewTimer(retry).C:
+			if retry < time.Second*20 {
+				retry *= 2
+			}
+		}
+
+	}
+}
+
+func (z *Zone) nullAndClose() {
 	entries := make(chan []dns.RR)
 	z.destroy <- entries
 	var nullified []dns.RR
@@ -247,22 +254,7 @@ func (z *Zone) nullEntries() {
 	resp := new(dns.Msg)
 	resp.MsgHdr.Response = true
 	resp.Answer = nullified
-	var timeout time.Duration = time.Second * 1
-	for {
-		err := z.multicastResponse(resp)
-		if err == nil {
-			break
-		}
-		select {
-		case <-z.shutdown:
-			return
-		case <-time.NewTimer(timeout).C:
-		}
-		if timeout < time.Second*20 {
-			timeout *= 2
-		}
-		z.joinMulticast()
-	}
+	z.multicastResponse(resp)
 	if z.net4 != nil {
 		z.net4.Close()
 	}
