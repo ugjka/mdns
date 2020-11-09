@@ -17,9 +17,12 @@ import (
 var delayer = make(chan struct{}, 1)
 
 // Prevent blasting zone announments at the same time
-func delay() {
+func delay(cancel chan struct{}) {
 	delayer <- struct{}{}
-	time.Sleep(time.Second)
+	select {
+	case <-time.NewTimer(time.Second).C:
+	case <-cancel:
+	}
 	<-delayer
 }
 
@@ -213,7 +216,7 @@ func (z *Zone) mainloop() {
 func (z *Zone) bcastEntries() {
 	defer z.wg.Done()
 	for {
-		delay()
+		delay(z.shutdown)
 		entries := make(chan []dns.RR)
 		select {
 		case z.broadcast <- entries:
