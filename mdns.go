@@ -143,41 +143,41 @@ func (z *Zone) mainloop() {
 			}
 		case rr := <-z.remove:
 			if domain, ok := z.domains[fqdn(rr)]; ok {
-				for v := range domain {
-					if dns.IsDuplicate(v, rr) {
-						delete(domain, v)
+				for entry := range domain {
+					if dns.IsDuplicate(entry, rr) {
+						delete(domain, entry)
 						resp := new(dns.Msg)
 						resp.MsgHdr.Response = true
-						resp.Answer = []dns.RR{null(v)}
+						resp.Answer = []dns.RR{null(entry)}
 						z.multicastResponse(resp, 0)
 					}
 				}
 			}
-		case q := <-z.queries:
-			for rr := range z.domains[q.Question.Name] {
-				if matches(q.Question, rr) {
-					q.result <- rr
+		case query := <-z.queries:
+			for rr := range z.domains[query.Question.Name] {
+				if matches(query.Question, rr) {
+					query.result <- rr
 				}
 			}
-			close(q.result)
-		case i := <-z.broadcast:
+			close(query.result)
+		case in := <-z.broadcast:
 			var out []dns.RR
-			for _, items := range z.domains {
-				for rr := range items {
+			for _, domain := range z.domains {
+				for rr := range domain {
 					out = append(out, rr)
 				}
 			}
-			i <- out
-			close(i)
-		case i := <-z.destroy:
+			in <- out
+			close(in)
+		case in := <-z.destroy:
 			var out []dns.RR
-			for _, items := range z.domains {
-				for rr := range items {
+			for _, domain := range z.domains {
+				for rr := range domain {
 					out = append(out, rr)
 				}
 			}
-			i <- out
-			close(i)
+			in <- out
+			close(in)
 			close(z.shutdown)
 			return
 		}
