@@ -1,6 +1,7 @@
 # MDNS
 
 [![GoDoc](https://godoc.org/github.com/ugjka/mdns?status.png)](https://godoc.org/github.com/ugjka/mdns)
+[![Go Report Card](https://goreportcard.com/badge/github.com/ugjka/mdns)](https://goreportcard.com/report/github.com/ugjka/mdns)
 [![Donate](paypal.svg?raw=true)](https://www.paypal.me/ugjka)
 
 ## Introduction
