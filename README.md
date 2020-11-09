@@ -18,8 +18,6 @@ This package can be installed using:
 
 `go get github.com/ugjka/mdns`
 
-For development, this package is developed with John Asmuths excellent gb utility.
-
 ## Usage
 
 Publishing mDNS records is simple
