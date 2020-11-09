@@ -17,7 +17,6 @@ import (
 var delayer = make(chan struct{}, 1)
 
 // Prevent blasting zone announments at the same time
-// otherwise Avahi gets funky
 func delay() {
 	delayer <- struct{}{}
 	time.Sleep(time.Second)
