@@ -25,15 +25,32 @@ For development, this package is developed with John Asmuths excellent gb utilit
 Publishing mDNS records is simple
 
 ```go
-import "github.com/ugjka/mdns"
+package main
+
+import (
+    "log"
+    "os"
+    "os/signal"
+    "syscall"
+
+    "github.com/ugjka/mdns"
+)
 
 func main(){
                         //ipv4  ipv6
     zone, err := mdns.New(true, false)
     if err != nil {
-            log.Fatal(err)
+        log.Fatal(err)
     }
-    zone.Publish("yourhost.local 60 IN A 192.168.1.100")
+
+    zone.Publish("yourhost.local. 60 IN A 192.168.1.2")
+    zone.Publish("2.1.168.192.in-addr.arpa. 60 IN PTR yourhost.local.")
+    defer zone.Shutdown()
+
+    sig := make(chan os.Signal, 1)
+    signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+    <-sig
+    log.Println("Shutting down.")
 }
 ```
 
