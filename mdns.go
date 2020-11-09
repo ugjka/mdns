@@ -22,11 +22,13 @@ type Zone struct {
 	broadcast chan chan []dns.RR
 	destroy   chan chan []dns.RR
 	lookup    chan *query // query exsting entries in zone
-	ifaces    []net.Interface
 	net4      *ipv4.PacketConn
 	net6      *ipv6.PacketConn
+	ifaces    []net.Interface
 	wg        sync.WaitGroup
 	shutdown  chan struct{}
+	ipv4      bool
+	ipv6      bool
 }
 
 // New initializes a new zone.
@@ -39,28 +41,37 @@ func New(ipv4, ipv6 bool) (*Zone, error) {
 		destroy:   make(chan chan []dns.RR),
 		lookup:    make(chan *query, 16),
 		shutdown:  make(chan struct{}),
+		ipv4:      ipv4,
+		ipv6:      ipv6,
 	}
 	if err := listenInit(ipv4, ipv6, z); err != nil {
 		return nil, err
 	}
-	z.ifaces = listMulticastInterfaces()
-	var err error
-	if ipv4 {
-		z.net4, err = joinUDP4Multicast(z.ifaces)
-		if err != nil {
-			return nil, err
-		}
-	}
-	if ipv6 {
-		z.net6, err = joinUDP6Multicast(z.ifaces)
-		if err != nil {
-			return nil, err
-		}
+	if err := z.joinMulticast(); err != nil {
+		return nil, err
 	}
 	z.wg.Add(2)
 	go z.mainloop()
 	go z.bcastEntries()
 	return z, nil
+}
+
+func (z *Zone) joinMulticast() error {
+	z.ifaces = listMulticastInterfaces()
+	var err error
+	if z.ipv4 {
+		z.net4, err = joinUDP4Multicast(z.ifaces)
+		if err != nil {
+			return err
+		}
+	}
+	if z.ipv6 {
+		z.net6, err = joinUDP6Multicast(z.ifaces)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func listenInit(ipv4, ipv6 bool, zone *Zone) error {
@@ -149,7 +160,18 @@ func (z *Zone) mainloop() {
 						resp := new(dns.Msg)
 						resp.MsgHdr.Response = true
 						resp.Answer = []dns.RR{null(entry)}
-						z.multicastResponse(resp)
+						var timeout time.Duration = time.Second * 1
+						for {
+							err := z.multicastResponse(resp)
+							if err == nil {
+								break
+							}
+							time.Sleep(timeout)
+							if timeout < time.Second*20 {
+								timeout *= 2
+							}
+							z.joinMulticast()
+						}
 					}
 				}
 			}
@@ -186,13 +208,8 @@ func (z *Zone) mainloop() {
 
 func (z *Zone) bcastEntries() {
 	defer z.wg.Done()
-	var sleep time.Duration = time.Second * 1
 	for {
-		time.Sleep(sleep)
-		if sleep < time.Second*10 {
-			sleep *= 2
-		}
-		z.ifaces = listMulticastInterfaces()
+		time.Sleep(time.Second)
 		entries := make(chan []dns.RR)
 		select {
 		case z.broadcast <- entries:
@@ -202,7 +219,11 @@ func (z *Zone) bcastEntries() {
 		resp := new(dns.Msg)
 		resp.MsgHdr.Response = true
 		resp.Answer = <-entries
-		z.multicastResponse(resp)
+		err := z.multicastResponse(resp)
+		if err != nil {
+			z.joinMulticast()
+		}
+		time.Sleep(time.Second * 4)
 	}
 }
 
@@ -216,14 +237,17 @@ func (z *Zone) nullEntries() {
 	resp := new(dns.Msg)
 	resp.MsgHdr.Response = true
 	resp.Answer = nullified
-	var sleep time.Duration = time.Millisecond * 100
+	var timeout time.Duration = time.Second * 1
 	for {
-		time.Sleep(sleep)
-		sleep *= 2
-		if sleep > time.Second {
+		err := z.multicastResponse(resp)
+		if err == nil {
 			break
 		}
-		z.multicastResponse(resp)
+		time.Sleep(timeout)
+		if timeout < time.Second*20 {
+			timeout *= 2
+		}
+		z.joinMulticast()
 	}
 	if z.net4 != nil {
 		z.net4.Close()
@@ -266,7 +290,10 @@ func (z *Zone) multicastResponse(msg *dns.Msg) error {
 		var wcm ipv4.ControlMessage
 		for _, intf := range z.ifaces {
 			wcm.IfIndex = intf.Index
-			z.net4.WriteTo(buf, &wcm, ipv4Addr)
+			_, err := z.net4.WriteTo(buf, &wcm, ipv4Addr)
+			if err != nil {
+				return err
+			}
 		}
 
 	}
@@ -275,7 +302,10 @@ func (z *Zone) multicastResponse(msg *dns.Msg) error {
 		var wcm ipv6.ControlMessage
 		for _, intf := range z.ifaces {
 			wcm.IfIndex = intf.Index
-			z.net6.WriteTo(buf, &wcm, ipv6Addr)
+			_, err := z.net6.WriteTo(buf, &wcm, ipv6Addr)
+			if err != nil {
+				return err
+			}
 		}
 	}
 	return nil
