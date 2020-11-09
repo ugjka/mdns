@@ -36,3 +36,7 @@ func main(){
     zone.Publish("yourhost.local 60 IN A 192.168.1.100")
 }
 ```
+
+## Warning
+
+Do not mix mDNS stacks, e.g. if you have Avahi daemon running don't use this then
