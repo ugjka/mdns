@@ -9,18 +9,6 @@ import (
 )
 
 var (
-	ipv4mcastaddr = &net.UDPAddr{
-		IP:   net.ParseIP("224.0.0.251"),
-		Port: 5353,
-	}
-
-	ipv6mcastaddr = &net.UDPAddr{
-		IP:   net.ParseIP("ff02::fb"),
-		Port: 5353,
-	}
-)
-
-var (
 	// Multicast groups used by mDNS
 	mdnsGroupIPv4 = net.IPv4(224, 0, 0, 251)
 	mdnsGroupIPv6 = net.ParseIP("ff02::fb")

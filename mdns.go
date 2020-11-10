@@ -95,14 +95,14 @@ func listenInit(ipv4, ipv6 bool, zone *Zone) error {
 	}
 
 	if ipv4 {
-		if err := zone.listen(ipv4mcastaddr); err != nil {
+		if err := zone.listen(ipv4Addr); err != nil {
 			return fmt.Errorf("ipv4 listen failed: %s", err)
 		}
 		zone.wg.Add(2)
 	}
 
 	if ipv6 {
-		if err := zone.listen(ipv6mcastaddr); err != nil {
+		if err := zone.listen(ipv6Addr); err != nil {
 			return fmt.Errorf("ipv6 listen failed: %s", err)
 		}
 		zone.wg.Add(2)
@@ -356,9 +356,9 @@ func (z *Zone) listen(addr *net.UDPAddr) error {
 func openSocket(addr *net.UDPAddr) (*net.UDPConn, error) {
 	switch addr.IP.To4() {
 	case nil:
-		return net.ListenMulticastUDP("udp6", nil, ipv6mcastaddr)
+		return net.ListenMulticastUDP("udp6", nil, ipv6Addr)
 	default:
-		return net.ListenMulticastUDP("udp4", nil, ipv4mcastaddr)
+		return net.ListenMulticastUDP("udp4", nil, ipv4Addr)
 	}
 }
 
