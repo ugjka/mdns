@@ -134,15 +134,6 @@ func (z *Zone) Shutdown() {
 	z.wg.Wait()
 }
 
-func contains(entries map[dns.RR]struct{}, entry dns.RR) bool {
-	for rr := range entries {
-		if dns.IsDuplicate(rr, entry) {
-			return true
-		}
-	}
-	return false
-}
-
 func (z *Zone) mainloop() {
 	defer z.wg.Done()
 	for {
