@@ -156,10 +156,7 @@ func (z *Zone) mainloop() {
 				resp := new(dns.Msg)
 				resp.MsgHdr.Response = true
 				resp.Answer = []dns.RR{null(rr)}
-				err := z.multicastResponse(resp)
-				if err != nil {
-					log.Printf("REMOVE: %s: %v", in.String(), err)
-				}
+				z.multicastResponse(resp)
 			}
 		case query := <-z.lookup:
 			for rr := range z.records {
