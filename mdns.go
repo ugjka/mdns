@@ -130,12 +130,23 @@ func (z *Zone) Shutdown() {
 	z.wg.Wait()
 }
 
+func exists(records map[dns.RR]struct{}, rr dns.RR) bool {
+	for record := range records {
+		if dns.IsDuplicate(record, rr) {
+			return true
+		}
+	}
+	return false
+}
+
 func (z *Zone) mainloop() {
 	defer z.wg.Done()
 	for {
 		select {
 		case in := <-z.add:
-			z.records[in] = struct{}{}
+			if !exists(z.records, in) {
+				z.records[in] = struct{}{}
+			}
 		case in := <-z.remove:
 			for rr := range z.records {
 				if !dns.IsDuplicate(in, rr) {
