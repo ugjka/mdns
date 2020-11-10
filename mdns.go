@@ -5,6 +5,7 @@ package mdns
 import (
 	"fmt"
 	"log"
+	"math/rand"
 	"net"
 	"sync"
 	"time"
@@ -14,21 +15,9 @@ import (
 	"golang.org/x/net/ipv6"
 )
 
-var delayer = make(chan struct{}, 1)
-
-// Prevent blasting zone announments at the same time
-func delay(cancel chan struct{}) {
-	delayer <- struct{}{}
-	select {
-	case <-time.NewTimer(time.Second).C:
-	case <-cancel:
-	}
-	<-delayer
-}
-
 // Zone holds all published entries.
 type Zone struct {
-	domains   map[string]map[dns.RR]struct{}
+	records   map[dns.RR]struct{}
 	add       chan dns.RR
 	remove    chan dns.RR
 	broadcast chan chan []dns.RR
@@ -46,7 +35,7 @@ type Zone struct {
 // New initializes a new zone.
 func New(ipv4, ipv6 bool) (*Zone, error) {
 	z := &Zone{
-		domains:   make(map[string]map[dns.RR]struct{}),
+		records:   make(map[dns.RR]struct{}),
 		add:       make(chan dns.RR),
 		remove:    make(chan dns.RR),
 		broadcast: make(chan chan []dns.RR),
@@ -158,52 +147,40 @@ func (z *Zone) mainloop() {
 	defer z.wg.Done()
 	for {
 		select {
-		case rr := <-z.add:
-			if domain, ok := z.domains[fqdn(rr)]; ok {
-				if !contains(domain, rr) {
-					domain[rr] = struct{}{}
+		case in := <-z.add:
+			z.records[in] = struct{}{}
+		case in := <-z.remove:
+			for rr := range z.records {
+				if !dns.IsDuplicate(in, rr) {
+					continue
 				}
-			} else {
-				z.domains[fqdn(rr)] = make(map[dns.RR]struct{})
-				z.domains[fqdn(rr)][rr] = struct{}{}
-			}
-		case rr := <-z.remove:
-			if domain, ok := z.domains[fqdn(rr)]; ok {
-				for entry := range domain {
-					if dns.IsDuplicate(entry, rr) {
-						delete(domain, entry)
-						resp := new(dns.Msg)
-						resp.MsgHdr.Response = true
-						resp.Answer = []dns.RR{null(entry)}
-						err := z.multicastResponse(resp)
-						if err != nil {
-							log.Printf("could not null %s: %v", rr.String(), err)
-						}
-					}
+				delete(z.records, rr)
+				resp := new(dns.Msg)
+				resp.MsgHdr.Response = true
+				resp.Answer = []dns.RR{null(rr)}
+				err := z.multicastResponse(resp)
+				if err != nil {
+					log.Printf("REMOVE: %s: %v", in.String(), err)
 				}
 			}
 		case query := <-z.lookup:
-			for rr := range z.domains[query.question.Name] {
-				if matches(query.question, rr) {
+			for rr := range z.records {
+				if query.question.Name == fqdn(rr) && matches(query.question, rr) {
 					query.in <- rr
 				}
 			}
 			close(query.in)
 		case in := <-z.broadcast:
 			var out []dns.RR
-			for _, domain := range z.domains {
-				for rr := range domain {
-					out = append(out, rr)
-				}
+			for rr := range z.records {
+				out = append(out, rr)
 			}
 			in <- out
 			close(in)
 		case in := <-z.destroy:
 			var out []dns.RR
-			for _, domain := range z.domains {
-				for rr := range domain {
-					out = append(out, rr)
-				}
+			for rr := range z.records {
+				out = append(out, rr)
 			}
 			in <- out
 			close(in)
@@ -215,8 +192,8 @@ func (z *Zone) mainloop() {
 
 func (z *Zone) bcastEntries() {
 	defer z.wg.Done()
+	var jitter time.Duration = time.Millisecond * 100 * time.Duration(rand.Intn(10))
 	for {
-		delay(z.shutdown)
 		entries := make(chan []dns.RR)
 		select {
 		case z.broadcast <- entries:
@@ -233,7 +210,7 @@ func (z *Zone) bcastEntries() {
 		select {
 		case <-z.shutdown:
 			return
-		case <-time.NewTimer(time.Second * 5).C:
+		case <-time.NewTimer(time.Second*5 + jitter).C:
 		}
 	}
 }
