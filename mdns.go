@@ -57,6 +57,11 @@ func New(ipv4, ipv6 bool) (*Zone, error) {
 	return z, nil
 }
 
+type query struct {
+	question dns.Question
+	in       chan dns.RR
+}
+
 func (z *Zone) joinMulticast() error {
 	z.ifaces = listMulticastInterfaces()
 	if z.ifaces == nil || len(z.ifaces) == 0 {
@@ -97,15 +102,6 @@ func listenInit(ipv4, ipv6 bool, zone *Zone) error {
 		zone.wg.Add(2)
 	}
 	return nil
-}
-
-type query struct {
-	question dns.Question
-	in       chan dns.RR
-}
-
-func fqdn(rr dns.RR) string {
-	return rr.Header().Name
 }
 
 // Publish adds a record, described in RFC XXX
@@ -181,6 +177,14 @@ func (z *Zone) mainloop() {
 	}
 }
 
+func fqdn(rr dns.RR) string {
+	return rr.Header().Name
+}
+
+func matches(question dns.Question, entry dns.RR) bool {
+	return question.Qtype == dns.TypeANY || question.Qtype == entry.Header().Rrtype
+}
+
 func (z *Zone) bcastEntries() {
 	defer z.wg.Done()
 	var jitter time.Duration = time.Millisecond * 100 * time.Duration(rand.Intn(10))
@@ -203,67 +207,6 @@ func (z *Zone) bcastEntries() {
 			return
 		case <-time.NewTimer(time.Second*5 + jitter).C:
 		}
-	}
-}
-
-func (z *Zone) tryJoinMulticast() {
-	var retry time.Duration = time.Second
-	for {
-		err := z.joinMulticast()
-		if err == nil {
-			return
-		}
-		select {
-		case <-z.shutdown:
-			return
-		case <-time.NewTimer(retry).C:
-			if retry < time.Second*20 {
-				retry *= 2
-			}
-		}
-
-	}
-}
-
-func (z *Zone) nullAndClose() {
-	entries := make(chan []dns.RR)
-	z.destroy <- entries
-	var nulled []dns.RR
-	for _, v := range <-entries {
-		nulled = append(nulled, null(v))
-	}
-	resp := new(dns.Msg)
-	resp.MsgHdr.Response = true
-	resp.Answer = nulled
-	z.multicastResponse(resp)
-	if z.net4 != nil {
-		z.net4.Close()
-	}
-	if z.net6 != nil {
-		z.net6.Close()
-	}
-}
-
-func null(rr dns.RR) dns.RR {
-	switch i := rr.(type) {
-	case *dns.A:
-		i.Hdr.Ttl = 0
-		return i
-	case *dns.AAAA:
-		i.Hdr.Ttl = 0
-		return i
-	case *dns.SRV:
-		i.Hdr.Ttl = 0
-		return i
-	case *dns.PTR:
-		i.Hdr.Ttl = 0
-		return i
-	case *dns.TXT:
-		i.Hdr.Ttl = 0
-		return i
-	default:
-		log.Printf("nulling not implemented for: %s", i)
-		return i
 	}
 }
 
@@ -298,13 +241,79 @@ func (z *Zone) multicastResponse(msg *dns.Msg) error {
 	return nil
 }
 
-func matches(question dns.Question, entry dns.RR) bool {
-	return question.Qtype == dns.TypeANY || question.Qtype == entry.Header().Rrtype
+func (z *Zone) tryJoinMulticast() {
+	var retry time.Duration = time.Second
+	for {
+		err := z.joinMulticast()
+		if err == nil {
+			return
+		}
+		select {
+		case <-z.shutdown:
+			return
+		case <-time.NewTimer(retry).C:
+			if retry < time.Second*20 {
+				retry *= 2
+			}
+		}
+
+	}
+}
+
+func null(rr dns.RR) dns.RR {
+	switch i := rr.(type) {
+	case *dns.A:
+		i.Hdr.Ttl = 0
+		return i
+	case *dns.AAAA:
+		i.Hdr.Ttl = 0
+		return i
+	case *dns.SRV:
+		i.Hdr.Ttl = 0
+		return i
+	case *dns.PTR:
+		i.Hdr.Ttl = 0
+		return i
+	case *dns.TXT:
+		i.Hdr.Ttl = 0
+		return i
+	default:
+		log.Printf("nulling not implemented for: %s", i)
+		return i
+	}
+}
+
+func (z *Zone) nullAndClose() {
+	entries := make(chan []dns.RR)
+	z.destroy <- entries
+	var nulled []dns.RR
+	for _, v := range <-entries {
+		nulled = append(nulled, null(v))
+	}
+	resp := new(dns.Msg)
+	resp.MsgHdr.Response = true
+	resp.Answer = nulled
+	z.multicastResponse(resp)
+	if z.net4 != nil {
+		z.net4.Close()
+	}
+	if z.net6 != nil {
+		z.net6.Close()
+	}
 }
 
 type connector struct {
 	*net.UDPConn
 	*Zone
+}
+
+func openSocket(addr *net.UDPAddr) (*net.UDPConn, error) {
+	switch addr.IP.To4() {
+	case nil:
+		return net.ListenMulticastUDP("udp6", nil, ipv6Addr)
+	default:
+		return net.ListenMulticastUDP("udp4", nil, ipv4Addr)
+	}
 }
 
 func (z *Zone) listen(addr *net.UDPAddr) error {
@@ -321,18 +330,23 @@ func (z *Zone) listen(addr *net.UDPAddr) error {
 	return nil
 }
 
-func openSocket(addr *net.UDPAddr) (*net.UDPConn, error) {
-	switch addr.IP.To4() {
-	case nil:
-		return net.ListenMulticastUDP("udp6", nil, ipv6Addr)
-	default:
-		return net.ListenMulticastUDP("udp4", nil, ipv4Addr)
-	}
-}
-
 type packet struct {
 	*dns.Msg
 	*net.UDPAddr
+}
+
+// consume an mdns packet from the wire and decode it
+func (c *connector) readMessage() (*dns.Msg, *net.UDPAddr, error) {
+	buf := make([]byte, 1500)
+	read, addr, err := c.ReadFromUDP(buf)
+	if err != nil {
+		return nil, nil, err
+	}
+	var msg dns.Msg
+	if err := msg.Unpack(buf[:read]); err != nil {
+		return nil, nil, err
+	}
+	return &msg, addr, nil
 }
 
 func (c *connector) readloop(in chan packet) {
@@ -355,37 +369,6 @@ func lookup(out chan *query, question dns.Question) (entries []dns.RR) {
 		entries = append(entries, rr)
 	}
 	return entries
-}
-
-func (c *connector) mainloop() {
-	defer c.wg.Done()
-	in := make(chan packet, 32)
-	go c.readloop(in)
-	for {
-		var msg packet
-		select {
-		case msg = <-in:
-		case <-c.shutdown:
-			c.Close()
-			return
-		}
-		msg.MsgHdr.Response = true // convert question to response
-		var entries []dns.RR
-		for _, question := range msg.Question {
-			entries = append(entries, lookup(c.lookup, question)...)
-		}
-		msg.Answer = append(msg.Answer, entries...)
-		msg.Answer = dns.Dedup(msg.Answer, make(map[string]dns.RR))
-		msg.Extra = append(msg.Extra, c.findExtra(msg.Answer...)...)
-		msg.Extra = dns.Dedup(msg.Extra, make(map[string]dns.RR))
-		if len(msg.Answer) > 0 {
-			// nuke questions
-			msg.Question = nil
-			if err := c.writeMessage(msg.Msg, msg.UDPAddr); err != nil {
-				log.Printf("cannot send: %s", err)
-			}
-		}
-	}
 }
 
 // recursively probe for related records
@@ -428,16 +411,33 @@ func (c *connector) writeMessage(msg *dns.Msg, addr *net.UDPAddr) error {
 	return err
 }
 
-// consume an mdns packet from the wire and decode it
-func (c *connector) readMessage() (*dns.Msg, *net.UDPAddr, error) {
-	buf := make([]byte, 1500)
-	read, addr, err := c.ReadFromUDP(buf)
-	if err != nil {
-		return nil, nil, err
+func (c *connector) mainloop() {
+	defer c.wg.Done()
+	in := make(chan packet, 32)
+	go c.readloop(in)
+	for {
+		var msg packet
+		select {
+		case msg = <-in:
+		case <-c.shutdown:
+			c.Close()
+			return
+		}
+		msg.MsgHdr.Response = true // convert question to response
+		var entries []dns.RR
+		for _, question := range msg.Question {
+			entries = append(entries, lookup(c.lookup, question)...)
+		}
+		msg.Answer = append(msg.Answer, entries...)
+		msg.Answer = dns.Dedup(msg.Answer, make(map[string]dns.RR))
+		msg.Extra = append(msg.Extra, c.findExtra(msg.Answer...)...)
+		msg.Extra = dns.Dedup(msg.Extra, make(map[string]dns.RR))
+		if len(msg.Answer) > 0 {
+			// nuke questions
+			msg.Question = nil
+			if err := c.writeMessage(msg.Msg, msg.UDPAddr); err != nil {
+				log.Printf("cannot send: %s", err)
+			}
+		}
 	}
-	var msg dns.Msg
-	if err := msg.Unpack(buf[:read]); err != nil {
-		return nil, nil, err
-	}
-	return &msg, addr, nil
 }
