@@ -438,8 +438,11 @@ func (c *connector) mainloop() {
 		}
 		msg.Answer = append(msg.Answer, entries...)
 		msg.Answer = dns.Dedup(msg.Answer, make(map[string]dns.RR))
-		msg.Extra = append(msg.Extra, c.findExtra(msg.Answer...)...)
+
+		related := c.findExtra(msg.Answer...)
+		msg.Extra = append(msg.Extra, related...)
 		msg.Extra = dns.Dedup(msg.Extra, make(map[string]dns.RR))
+
 		if len(msg.Answer) > 0 {
 			// nuke questions
 			msg.Question = nil
