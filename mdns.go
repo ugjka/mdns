@@ -370,7 +370,7 @@ func (c *connector) readloop(in chan packet) {
 	}
 }
 
-func lookup(out chan *query, question dns.Question) (entries []dns.RR) {
+func lookup(out chan<- *query, question dns.Question) (entries []dns.RR) {
 	in := make(chan dns.RR, 16)
 	out <- &query{question, in}
 	for rr := range in {
